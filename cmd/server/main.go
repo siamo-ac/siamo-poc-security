@@ -1,6 +1,8 @@
 // Command server runs the siamo-poc-security demo API over HTTPS:
 //
 //	POST /login          -> {"token": "..."}  (demo creds: admin / demo1234)
+//	POST /oauth2/token   -> {"access_token": "..."}  (OAuth2 client_credentials
+//	                        grant, demo client: svc-reporting / svc-secret-42)
 //	GET  /public         -> open to everyone
 //	GET  /protected      -> requires "Authorization: Bearer <token>"
 //	POST /secrets/{name} -> encrypt + store a secret (protected)
@@ -17,6 +19,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/siamosystems/siamo-poc-security/internal/auth"
 	"github.com/siamosystems/siamo-poc-security/internal/cert"
@@ -27,6 +30,12 @@ import (
 const (
 	demoUser = "admin"
 	demoPass = "demo1234"
+
+	// OAuth2 demo client for the client_credentials grant
+	// (machine-to-machine, RFC 6749 section 4.4). Hardcoded on purpose:
+	// this endpoint is a mock token issuer, not an identity system.
+	demoClientID     = "svc-reporting"
+	demoClientSecret = "svc-secret-42"
 )
 
 func main() {
@@ -64,6 +73,34 @@ func main() {
 
 	mux.HandleFunc("GET /public", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"message": "this route needs no token"})
+	})
+
+	// Mock OAuth2 token endpoint: the client_credentials grant (RFC 6749
+	// section 4.4). No human, no password — the client authenticates with its
+	// own id + secret and gets a JWT access token. The resource server
+	// (/protected etc.) validates that token exactly like a /login token:
+	// the OAuth2 idea is that *issuing* and *accepting* are separate jobs.
+	mux.HandleFunc("POST /oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+			return
+		}
+		if r.FormValue("grant_type") != "client_credentials" ||
+			r.FormValue("client_id") != demoClientID ||
+			r.FormValue("client_secret") != demoClientSecret {
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+		tok, err := auth.Issue("client:" + demoClientID)
+		if err != nil {
+			http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"access_token": tok,
+			"token_type":   "Bearer",
+			"expires_in":   int64(auth.TTL / time.Second),
+		})
 	})
 
 	protected := http.NewServeMux()

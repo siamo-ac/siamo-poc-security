@@ -43,5 +43,20 @@ echo "==> 7. what is actually on disk (data/secrets.json)?"
 cat /tmp/pocsec-data/secrets.json; echo
 echo "   -> the plaintext 'shhh-very-secret' appears NOWHERE above."
 
+echo "==> 8. OAuth2 client_credentials grant (machine-to-machine, no human):"
+OAUTH_TOKEN=$(curl -sk -X POST "$BASE/oauth2/token" \
+  -d 'grant_type=client_credentials' \
+  -d 'client_id=svc-reporting' \
+  -d 'client_secret=svc-secret-42' | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
+echo "access token issued (first 40 chars): ${OAUTH_TOKEN:0:40}..."
+
+echo "==> 9. wrong client secret -> expect 401 invalid_client:"
+curl -sk -o /dev/null -w "HTTP %{http_code}\n" -X POST "$BASE/oauth2/token" \
+  -d 'grant_type=client_credentials' -d 'client_id=svc-reporting' -d 'client_secret=nope'
+
+echo "==> 10. /protected WITH the OAuth2 access token -> expect 200:"
+curl -sk -o /dev/null -w "HTTP %{http_code}\n" -H "Authorization: Bearer $OAUTH_TOKEN" "$BASE/protected"
+curl -sk -H "Authorization: Bearer $OAUTH_TOKEN" "$BASE/protected"; echo
+
 echo
 echo "Demo complete. Also try: curl -kv $BASE/public | grep -i 'SSL connection\|TLS' to see the handshake."
