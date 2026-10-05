@@ -1,0 +1,4 @@
+data/secrets.json
+*.pem
+*.key
+*.crt
